@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 220 20% 97%;
+  --foreground: 220 15% 15%;
+  --card: 220 20% 100%;
+  --muted: 220 15% 92%;
+  --muted-foreground: 215 10% 46%;
+  --primary: 142 72% 36%;
+  --accent: 174 62% 38%;
+  --border: 220 15% 85%;
+  --agent-hr: 214 85% 50%;
+  --agent-it: 280 68% 55%;
+  --agent-finance: 45 93% 42%;
+  --agent-productivity: 25 95% 50%;
+  --agent-knowledge: 160 72% 36%;
+}
+
+body {
+  margin: 0;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "DM Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Markdown in chat */
+.chat-markdown p {
+  margin: 0.25em 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.25em 0;
+  padding-left: 1.5em;
+}
+
+.chat-markdown code {
+  background: hsl(var(--muted));
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.875em;
+}
+
+.chat-markdown pre {
+  background: hsl(var(--muted));
+  padding: 0.75em 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+/* Blinking cursor */
+.cursor-blink::after {
+  content: "\2588";
+  animation: blink 1s step-end infinite;
+  color: hsl(var(--primary));
+}
