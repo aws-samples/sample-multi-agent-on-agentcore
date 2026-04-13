@@ -14,8 +14,8 @@ The system is composed of six principal layers:
 | **Registry** | AgentCore Registry | Central catalog of all sub-agents with MCP descriptors. Provides semantic search and lifecycle management (approval workflow). The orchestrator discovers available agents and their tool schemas at startup. |
 | **Gateway** | AgentCore Gateway (MCP) | Aggregates all sub-agent tools into a single MCP endpoint. Handles JWT validation, request routing, and OAuth2 machine-to-machine auth to sub-agent runtimes. |
 | **Sub-agents** | AgentCore Runtime (MCP) x 5 | Independent, stateless MCP runtimes — one per business domain. Each exposes domain-specific tools and receives user context transparently via Gateway injection. |
-| **Data** | DynamoDB + IAM RBAC | Per-user data table with IAM LeadingKeys condition. Scoped credentials are injected per-request so each user can only access their own partition. |
-| **Identity** | AgentCore Identity | Provider-agnostic identity abstraction. Exchanges user JWTs for workload access tokens, decoupling the system from any specific OAuth provider. |
+| **Data** | DynamoDB + IAM RBAC | Per-user data table with role-based IAM conditions. HR_Manager gets full table read; other roles are restricted to their own partition via `LeadingKeys` + `PrincipalTag` conditions. |
+| **Identity** | Cognito + AgentCore Identity | Cognito User Pool Groups define roles (HR_Manager, Engineer, Analyst). The `cognito:groups` JWT claim carries the role through the request chain. AgentCore Identity provides provider-agnostic token exchange for outbound API delegation (RBAC B pattern). |
 | **Memory** | AgentCore Memory | Stores short-term conversation events and asynchronously extracts long-term records (user preferences, semantic facts) with no custom infrastructure. |
 
 ![Architecture](docs/images/architecture.svg)
@@ -41,13 +41,13 @@ This pattern means **adding a new sub-agent requires no orchestrator code change
 6. Agent calls the Gateway via MCP `tools/call`, forwarding the user's JWT as `Authorization: Bearer` header
 7. Gateway validates the JWT (`CUSTOM_JWT` authorizer) and forwards the request to the Interceptor Lambda
 8. Interceptor Lambda:
-   - Exchanges the user JWT for a workload access token via AgentCore Identity
    - Extracts user identity from JWT claims (OIDC standard `sub`, `username`)
-   - Assumes a scoped IAM role with `user_id` session tag via STS
-   - Injects user identity + scoped AWS credentials into the JSON-RPC `params.arguments`
+   - Extracts role from `cognito:groups` claim (e.g., `HR_Manager`, `Engineer`)
+   - Assumes a scoped IAM role with `user_id` + `role` session tags via STS
+   - Injects user identity, role, and scoped AWS credentials into the JSON-RPC `params.arguments`
 9. Gateway routes the call to the target sub-agent with an M2M token (OAuth2 `client_credentials`)
 10. Sub-agent's `UserContextMiddleware` extracts injected fields into `ContextVar` and strips them from the body before tool handlers run
-11. Tool functions use the scoped credentials to query DynamoDB — IAM LeadingKeys condition ensures only the authenticated user's data is accessible
+11. Tool functions use the scoped credentials to query DynamoDB — IAM conditions enforce role-based data scope (HR_Manager reads all partitions; others read only their own)
 12. Orchestrator streams the response to the frontend via SSE
 13. Memory asynchronously extracts long-term records in the background
 
@@ -72,14 +72,14 @@ This pattern means **adding a new sub-agent requires no orchestrator code change
 │       └── shared/            # Shared middleware, DynamoDB client, user context
 ├── infra/                     # CDK infrastructure (TypeScript)
 │   ├── lib/
-│   │   ├── auth-stack.ts      # Cognito + Pre Token Generation + OAuth2 credential provider + Workload Identity
+│   │   ├── auth-stack.ts      # Cognito + Groups (RBAC roles) + Pre Token Generation + OAuth2 credential provider + Workload Identity
 │   │   ├── data-stack.ts      # DynamoDB tables + scoped IAM role (RBAC)
 │   │   ├── component-runtime-stack.ts  # Sub-agent runtime stacks
 │   │   ├── registry-stack.ts  # AgentCore Registry + agent records (MCP descriptors)
 │   │   ├── gateway-stack.ts   # AgentCore Gateway + Interceptor Lambda
 │   │   └── runtime-stack.ts   # Orchestrator runtime + AgentCore Memory
 │   └── lambda/
-│       ├── gateway-interceptor/  # JWT decode, STS AssumeRole, credential injection
+│       ├── gateway-interceptor/  # JWT decode, role extraction, STS AssumeRole + TagSession, credential injection
 │       ├── registry-manager/     # Custom Resource for Registry lifecycle management
 │       └── data-seeder/          # Populates DynamoDB with demo fixture data
 ├── frontend/                  # Next.js 15 dashboard
@@ -184,13 +184,13 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Select one of the demo users from the header:
 
-| Username | Role | Department |
-|----------|------|------------|
-| `alice` | HR Manager | Human Resources |
-| `bob` | Software Engineer | Engineering |
-| `charlie` | Business Analyst | Operations |
+| Username | Cognito Group | Role | Department | Data Scope |
+|----------|--------------|------|------------|------------|
+| `alice` | `HR_Manager` | HR Manager | Human Resources | All users' data (full table read) |
+| `bob` | `Engineer` | Software Engineer | Engineering | Own data only |
+| `charlie` | `Analyst` | Business Analyst | Operations | Own data only |
 
-Each user has their own set of demo data (PTO, expenses, tickets, etc.) stored in DynamoDB. RBAC ensures each user can only access their own data at the IAM level.
+Each user has their own set of demo data (PTO, expenses, tickets, etc.) stored in DynamoDB. The Cognito Group determines the IAM data scope — `HR_Manager` can read all users' partitions, while `Engineer` and `Analyst` are restricted to their own partition key.
 
 ---
 
@@ -198,8 +198,8 @@ Each user has their own set of demo data (PTO, expenses, tickets, etc.) stored i
 
 | Stack | Description |
 |-------|-------------|
-| `multi-agent-concierge-auth` | Cognito User Pool, Pre Token Generation trigger, OAuth2 Credential Provider, Workload Identity, demo users |
-| `multi-agent-concierge-data` | DynamoDB tables (per-user + global), scoped IAM role, fixture data seed |
+| `multi-agent-concierge-auth` | Cognito User Pool, User Pool Groups (HR_Manager, Engineer, Analyst), Pre Token Generation trigger, OAuth2 Credential Provider, Workload Identity, demo users |
+| `multi-agent-concierge-data` | DynamoDB tables (per-user + global), scoped IAM role (role-based data access), fixture data seed |
 | `multi-agent-concierge-hr` | HR MCP Runtime (ECR + AgentCore Runtime) |
 | `multi-agent-concierge-it-support` | IT Support MCP Runtime |
 | `multi-agent-concierge-finance` | Finance MCP Runtime |
@@ -225,28 +225,27 @@ The frontend authenticates the user against Cognito via `USER_PASSWORD_AUTH` and
 2. Orchestrator → Gateway: JWT as `Authorization: Bearer` header
 3. Gateway validates the JWT via `CUSTOM_JWT` authorizer (checks issuer, client_id, and `agentcore/invoke` scope)
 
-### RBAC A — IAM-scoped access to AWS resources
+### RBAC A — Role-based data scoping via IAM
 
-After JWT validation, the Gateway Interceptor Lambda converts the user's identity into IAM-scoped credentials for per-user data access:
+RBAC controls **data scope**, not tool/agent access. The permission decision lives in IAM, outside application code. After JWT validation, the Gateway Interceptor Lambda converts the user's identity and role into IAM-scoped credentials:
 
-1. **AgentCore Identity**: exchanges the user JWT for a workload access token (`GetWorkloadAccessTokenForJwt`) — this is the provider-agnostic layer that decouples the system from any specific OAuth provider
-2. **JWT decode**: extracts `username` from OIDC standard claims (`preferred_username` → `username` → `email`)
-3. **STS AssumeRole + TagSession**: assumes a scoped IAM role with `user_id = username` session tag
-4. **Credential injection**: injects scoped AWS credentials into the JSON-RPC `params.arguments`
+1. **JWT decode**: extracts `username` from OIDC standard claims and `role` from the `cognito:groups` claim
+2. **STS AssumeRole + TagSession**: assumes a scoped IAM role with two session tags: `user_id = username` and `role = <cognito_group>` (e.g., `HR_Manager`)
+3. **Credential injection**: injects scoped AWS credentials + role into the JSON-RPC `params.arguments`
 
-The sub-agent uses these scoped credentials to query DynamoDB. The IAM policy restricts access to the user's own partition key:
+The scoped IAM role has two policy statements that implement role-based data access:
 
-```json
-{
-  "Condition": {
-    "ForAllValues:StringEquals": {
-      "dynamodb:LeadingKeys": ["${aws:PrincipalTag/user_id}"]
-    }
-  }
-}
+```
+HR_Manager role  →  Full table read (GetItem, Query, BatchGetItem, Scan)
+                    Condition: aws:PrincipalTag/role = "HR_Manager"
+
+All other roles  →  Own partition only (GetItem, Query, BatchGetItem)
+                    Condition: dynamodb:LeadingKeys = ${aws:PrincipalTag/user_id}
 ```
 
-The trust policy additionally denies `AssumeRole` if the `user_id` tag is not set — requests without a user context are rejected at the IAM level.
+IAM evaluation: if a principal matches any ALLOW statement, access is granted. HR_Manager matches the first statement and gets unrestricted table read. Other roles only match the second statement and are confined to their own partition key. The trust policy additionally denies `AssumeRole` if the `user_id` tag is not set — requests without a user context are rejected at the IAM level.
+
+**Why IAM-level, not application-level?** Even if a sub-agent has a bug or a tool query is misconfigured, the IAM condition prevents cross-user data access. The permission boundary is enforced by AWS, not by application code.
 
 ### RBAC B — Delegated access to 3rd-party APIs (not implemented)
 
@@ -260,7 +259,7 @@ The Gateway authenticates to sub-agent runtimes using OAuth2 `client_credentials
 
 | Table | PK | SK | Access |
 |-------|----|----|--------|
-| `*-user-data` | `username` (alice, bob, charlie) | `DOMAIN#TYPE[#ID]` (e.g., `HR#PTO_BALANCE`, `FIN#EXPENSE#EXP-2026-0551`) | Scoped credentials (RBAC A) |
+| `*-user-data` | `username` (alice, bob, charlie) | `DOMAIN#TYPE[#ID]` (e.g., `HR#PTO_BALANCE`, `FIN#EXPENSE#EXP-2026-0551`) | Scoped credentials (RBAC A) — HR_Manager: all PKs; others: own PK only |
 | `*-global-data` | `CATEGORY#key` (e.g., `POLICY#pto_policy`, `OFFICE#seattle`) | `DETAIL` | Runtime default credentials (no RBAC) |
 
 ---
@@ -287,13 +286,11 @@ Registry is a **control-plane / build-time resource** — it holds metadata abou
 
 **Stateless sub-agents** — All state lives in the Orchestrator's Memory session. Sub-agents scale horizontally with no shared state.
 
-**IAM-level RBAC over application filtering** — User data isolation is enforced by IAM conditions on DynamoDB, not by query filters in application code. Even if a sub-agent has a bug, it cannot access another user's partition.
+**IAM-level RBAC over application filtering** — Data scope is enforced by IAM conditions (`PrincipalTag/role` + `LeadingKeys`), not by query filters in application code. Role definitions live in Cognito Groups; permission boundaries live in IAM policy. Application code never makes access-control decisions.
 
-**Provider-agnostic identity** — AgentCore Identity abstracts the OAuth provider. Swapping Cognito for Okta or Azure AD requires only updating the OIDC discovery URL, with no code changes.
+**Single token through the chain** — One user access token (with `agentcore/invoke` scope and `cognito:groups` claim) flows from frontend through orchestrator to Gateway to interceptor. No intermediate token exchanges on the inbound path. The Pre Token Generation trigger ensures all auth flows produce properly scoped tokens.
 
-**Single token through the chain** — One user access token (with `agentcore/invoke` scope) flows from frontend through orchestrator to Gateway to interceptor. No intermediate token exchanges or M2M tokens on the inbound path. The Pre Token Generation trigger ensures all auth flows produce properly scoped tokens.
-
-**JWT injection at the Gateway boundary** — The Interceptor Lambda extracts user identity and scoped AWS credentials from the JWT and injects them as tool arguments. Sub-agents receive user context as plain function parameters — no JWT libraries, STS calls, or token validation code required.
+**JWT injection at the Gateway boundary** — The Interceptor Lambda extracts user identity, role, and scoped AWS credentials from the JWT and injects them as tool arguments. Sub-agents receive user context as plain function parameters — no JWT libraries, STS calls, or token validation code required.
 
 **Registry + Gateway separation** — Registry is control plane (catalog, discovery, governance). Gateway is data plane (routing, auth, invocation). This separation allows independent scaling and lifecycle management.
 

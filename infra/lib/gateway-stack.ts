@@ -202,7 +202,7 @@ export class GatewayStack extends cdk.Stack {
       protocolConfiguration: {
         mcp: {
           supportedVersions: ['2025-03-26', '2025-06-18'],
-          searchType: 'HYBRID',
+          searchType: 'SEMANTIC',
         },
       },
       tags: {

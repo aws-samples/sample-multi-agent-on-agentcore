@@ -100,7 +100,33 @@ export class DataStack extends cdk.Stack {
       })
     )
 
-    // DynamoDB access scoped to the user's partition key
+    // DynamoDB RBAC: role-based data scope
+    //
+    // Default: users can only read their own partition (PK = user_id)
+    // HR_Manager: can read all users' data (team oversight)
+    //
+    // IAM evaluation: any ALLOW wins, so HR_Manager matches the first
+    // statement and gets full table read; others only match the second.
+
+    scopedRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'HRManagerFullTableRead',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'dynamodb:GetItem',
+          'dynamodb:Query',
+          'dynamodb:BatchGetItem',
+          'dynamodb:Scan',
+        ],
+        resources: [userTable.tableArn],
+        conditions: {
+          'StringEquals': {
+            'aws:PrincipalTag/role': 'HR_Manager',
+          },
+        },
+      })
+    )
+
     scopedRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'UserScopedDynamoDBRead',

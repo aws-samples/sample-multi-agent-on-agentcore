@@ -349,6 +349,25 @@ async function sendResponse(event, status, data, reason) {
 
     const demoUsers = ['alice', 'bob', 'charlie']
 
+    // ============================================================
+    // RBAC: Cognito Groups (Role definitions)
+    // ============================================================
+
+    const roleDefinitions: Record<string, { description: string; members: string[] }> = {
+      HR_Manager: { description: 'HR Manager role — access to HR, Knowledge, Productivity agents', members: ['alice'] },
+      Engineer: { description: 'Engineer role — access to IT Support, Knowledge, Productivity agents', members: ['bob'] },
+      Analyst: { description: 'Analyst role — access to Finance, Knowledge, Productivity agents', members: ['charlie'] },
+    }
+
+    // Create groups first (no user dependency)
+    for (const [roleName, roleDef] of Object.entries(roleDefinitions)) {
+      new cognito.CfnUserPoolGroup(this, `${roleName}Group`, {
+        userPoolId: this.userPool.userPoolId,
+        groupName: roleName,
+        description: roleDef.description,
+      })
+    }
+
     const credProvider = new cdk.CustomResource(this, 'AuthSetup', {
       serviceToken: authSetupFn.functionArn,
       properties: {
@@ -364,6 +383,22 @@ async function sendResponse(event, status, data, reason) {
     })
 
     this.credentialProviderArn = credProvider.getAttString('CredentialProviderArn')
+
+    // Assign demo users to groups (after users are created by credProvider)
+    for (const [roleName, roleDef] of Object.entries(roleDefinitions)) {
+      for (const username of roleDef.members) {
+        const attachment = new cognito.CfnUserPoolUserToGroupAttachment(
+          this,
+          `${username}To${roleName}`,
+          {
+            userPoolId: this.userPool.userPoolId,
+            groupName: roleName,
+            username,
+          },
+        )
+        attachment.node.addDependency(credProvider)
+      }
+    }
 
     // ============================================================
     // SSM Parameters (consumed by other stacks)

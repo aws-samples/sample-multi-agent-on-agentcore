@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 current_username: ContextVar[str] = ContextVar("current_username", default="unknown")
 current_user_id: ContextVar[str] = ContextVar("current_user_id", default="unknown")
 current_session_id: ContextVar[str] = ContextVar("current_session_id", default="unknown")
+current_role: ContextVar[str] = ContextVar("current_role", default="unknown")
 
 # RBAC: Scoped AWS credentials (injected by interceptor via STS AssumeRole + TagSession)
 current_aws_access_key_id: ContextVar[str] = ContextVar("current_aws_access_key_id", default="")
@@ -40,6 +41,11 @@ def get_current_user_id() -> str:
 def get_current_session_id() -> str:
     """Get the session ID from the current request context."""
     return current_session_id.get()
+
+
+def get_current_role() -> str:
+    """Get the RBAC role (e.g. 'HR_Manager') from the current request context."""
+    return current_role.get()
 
 
 def get_scoped_credentials() -> dict | None:
@@ -90,7 +96,7 @@ class UserContextMiddleware:
             more_body = next_message.get("more_body", False)
 
         # Extract injected_* fields from JSON-RPC arguments and strip them
-        uname, uid, sid = "", "", ""
+        uname, uid, sid, user_role = "", "", "", ""
         access_key, secret_key, session_token = "", "", ""
         cleaned_body = body
         try:
@@ -102,6 +108,7 @@ class UserContextMiddleware:
                 uname = arguments.pop("injected_username", "")
                 uid = arguments.pop("injected_user_id", "")
                 sid = arguments.pop("injected_session_id", "")
+                user_role = arguments.pop("injected_role", "")
                 arguments.pop("injected_auth_token", None)  # kept for backward compatibility
 
                 # RBAC credentials — never log these values
@@ -112,13 +119,14 @@ class UserContextMiddleware:
                 cleaned_body = json.dumps(data).encode()
 
             if uname:
-                logger.info(f"UserContextMiddleware: username={uname}, user_id={uid}, session_id={sid}, rbac={'yes' if access_key else 'no'}")
+                logger.info(f"UserContextMiddleware: username={uname}, user_id={uid}, role={user_role}, session_id={sid}, rbac={'yes' if access_key else 'no'}")
         except (json.JSONDecodeError, AttributeError):
             pass  # Not a JSON-RPC body (e.g. MCP session follow-up)
 
         current_username.set(uname or "unknown")
         current_user_id.set(uid or "unknown")
         current_session_id.set(sid or "unknown")
+        current_role.set(user_role or "unknown")
         current_aws_access_key_id.set(access_key)
         current_aws_secret_access_key.set(secret_key)
         current_aws_session_token.set(session_token)

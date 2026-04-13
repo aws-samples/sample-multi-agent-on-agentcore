@@ -16,6 +16,7 @@ import base64
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 import boto3
 
@@ -84,11 +85,11 @@ def exchange_token_via_identity(user_jwt: str) -> str | None:
         return None
 
 
-def assume_scoped_role(username: str) -> dict | None:
-    """Assume the scoped IAM role with user_id session tag for RBAC.
+def assume_scoped_role(username: str, role: str = "unknown") -> dict | None:
+    """Assume the scoped IAM role with user_id and role session tags for RBAC.
 
     Returns temporary credentials (AccessKeyId, SecretAccessKey, SessionToken)
-    that are scoped to the user's DynamoDB partition via IAM LeadingKeys condition.
+    scoped by user_id (DynamoDB partition) and role (data access scope).
     """
     if not SCOPED_ROLE_ARN:
         logger.warning("SCOPED_ROLE_ARN not configured, skipping RBAC credential injection")
@@ -101,6 +102,7 @@ def assume_scoped_role(username: str) -> dict | None:
             DurationSeconds=900,  # 15 minutes (minimum)
             Tags=[
                 {'Key': 'user_id', 'Value': username},
+                {'Key': 'role', 'Value': role},
             ],
         )
         creds = response['Credentials']
@@ -152,10 +154,14 @@ def lambda_handler(event, context):
     # Session ID: prefer custom header (app-level), fall back to JWT jti (token-level)
     session_id = headers.get("x-session-id", "") or claims.get("jti") or "unknown"
 
-    logger.info(f"Identity: user_id={user_id}, username={username}, identity_exchanged={'yes' if workload_access_token else 'no'}")
+    # Step 2.5: Extract role from cognito:groups claim
+    groups = claims.get("cognito:groups", [])
+    role = groups[0] if groups else "unknown"
 
-    # Step 3: Assume scoped role for RBAC — credentials will be tagged with user_id
-    scoped_creds = assume_scoped_role(username) if username != "unknown" else None
+    logger.info(f"Identity: user_id={user_id}, username={username}, role={role}, identity_exchanged={'yes' if workload_access_token else 'no'}")
+
+    # Step 3: Assume scoped role for RBAC — credentials will be tagged with user_id + role
+    scoped_creds = assume_scoped_role(username, role) if username != "unknown" else None
 
     out_headers = {
         "Accept": "application/json",
@@ -179,12 +185,22 @@ def lambda_handler(event, context):
                 arguments["injected_user_id"] = str(user_id)
                 arguments["injected_username"] = str(username)
                 arguments["injected_session_id"] = str(session_id)
+                arguments["injected_role"] = str(role)
 
                 # Inject scoped AWS credentials for RBAC DynamoDB access
                 if scoped_creds:
                     arguments["injected_aws_access_key_id"] = scoped_creds["AccessKeyId"]
                     arguments["injected_aws_secret_access_key"] = scoped_creds["SecretAccessKey"]
                     arguments["injected_aws_session_token"] = scoped_creds["SessionToken"]
+
+                # Audit log
+                logger.info(json.dumps({
+                    "event": "agent_access",
+                    "user_id": username,
+                    "role": role,
+                    "tool_name": tool_name,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }))
 
                 logger.info(f"Injected context for tool: {tool_name} (rbac={'yes' if scoped_creds else 'no'})")
 
