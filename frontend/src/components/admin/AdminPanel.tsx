@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Shield, Trash2, RefreshCw } from "lucide-react";
 import { GatewayToolsPanel } from "./GatewayToolsPanel";
+import { ToolSearchPanel } from "./ToolSearchPanel";
 import { ToolCallPanel } from "./ToolCallPanel";
 import { PromptPanel } from "./PromptPanel";
 
@@ -109,7 +110,16 @@ export function AdminPanel({ currentUsername, lastUserMessage, sessionId, isStre
           </div>
         ) : (
           <>
-            {tab === "registry" && <GatewayToolsPanel token={token} />}
+            {tab === "registry" && (
+              <div className="flex flex-col h-full">
+                <div className="shrink-0 border-b border-border">
+                  <ToolSearchPanel token={token} />
+                </div>
+                <div className="flex-1 min-h-0 overflow-auto">
+                  <GatewayToolsPanel token={token} />
+                </div>
+              </div>
+            )}
             {tab === "prompt"   && (
               <PromptPanel
                 lastUserMessage={lastUserMessage}

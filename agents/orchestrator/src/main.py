@@ -76,7 +76,6 @@ class InvocationInput(BaseModel):
     auth_token: Optional[str] = None
     user_id: Optional[str] = None
     session_id: Optional[str] = None
-    use_search: bool = False
 
 
 def _is_input_complete(tool_input) -> tuple[bool, dict]:
@@ -122,7 +121,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Concierge Agent",
     version="1.0.0",
-    description="Multi-agent concierge with HR, IT Support, Finance, Productivity, and Knowledge sub-agents",
+    description="Multi-agent concierge with dynamic agent discovery via Registry and invocation via Gateway",
     lifespan=lifespan,
 )
 
@@ -146,7 +145,6 @@ async def stream_agent_response(
     message: str,
     model_id: Optional[str] = None,
     auth_token: Optional[str] = None,
-    use_search: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Stream agent response as SSE events using stream_async().
 
@@ -158,28 +156,14 @@ async def stream_agent_response(
       done       — {"type":"done"}
     """
     from agent import create_orchestrator_agent
-    from gateway.mcp_client import preemptive_search
 
     use_memory_retrieval = os.environ.get("USE_MEMORY_RETRIEVAL", "false").lower() == "true"
-
-    # When search is enabled, preemptively call Gateway semantic search
-    # to get the top-k relevant tools, then only give those to the agent.
-    allowed_tools = None
-    if use_search:
-        allowed_tools = await preemptive_search(
-            query=message,
-            auth_token=auth_token,
-            session_id=session_id,
-            user_id=user_id,
-        )
 
     agent = create_orchestrator_agent(
         session_id=session_id,
         user_id=user_id,
         model_id=model_id,
         auth_token=auth_token,
-        use_search=use_search,
-        allowed_tools=allowed_tools if allowed_tools else None,
         use_memory_retrieval=use_memory_retrieval,
     )
 
@@ -283,7 +267,6 @@ async def invocations(request: Request):
             message=input_data.message,
             model_id=input_data.model_id,
             auth_token=input_data.auth_token,
-            use_search=input_data.use_search,
         ),
         media_type="text/event-stream",
         headers={

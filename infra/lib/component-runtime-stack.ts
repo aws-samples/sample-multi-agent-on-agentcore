@@ -436,6 +436,11 @@ async function sendResponse(event, status, data, reason) {
     this.runtime.node.addDependency(buildWaiter)
     this.runtimeArn = this.runtime.attrAgentRuntimeArn
 
+    // Cost allocation tags on the execution role for Bedrock cost tracking per sub-agent
+    cdk.Tags.of(executionRole).add('CostCenter', componentName)
+    cdk.Tags.of(executionRole).add('AgentComponent', componentName)
+    cdk.Tags.of(executionRole).add('AgentRole', 'sub-agent')
+
     // Build Runtime invocation URL
     const encodedArn = cdk.Fn.join('', [
       'arn%3Aaws%3Abedrock-agentcore%3A',

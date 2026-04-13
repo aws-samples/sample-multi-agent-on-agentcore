@@ -14,7 +14,7 @@ export async function GET() {
     );
     const content = fs.readFileSync(agentPath, "utf-8");
 
-    const match = content.match(/SYSTEM_PROMPT\s*=\s*"""([\s\S]*?)"""/);
+    const match = content.match(/SYSTEM_PROMPT(?:_TEMPLATE)?\s*=\s*"""([\s\S]*?)"""/);
     const systemPrompt = match ? match[1].trim() : null;
 
     return NextResponse.json({ systemPrompt });

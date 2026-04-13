@@ -15,7 +15,13 @@ import {
 import {
   BedrockAgentCoreClient,
   InvokeAgentRuntimeCommand,
+  SearchRegistryRecordsCommand,
 } from "@aws-sdk/client-bedrock-agentcore";
+import {
+  BedrockAgentCoreControlClient,
+  ListRegistryRecordsCommand,
+  GetRegistryRecordCommand,
+} from "@aws-sdk/client-bedrock-agentcore-control";
 
 const PROJECT_NAME = "multi-agent-concierge";
 const ENVIRONMENT = "dev";
@@ -44,6 +50,7 @@ export async function loadSSMConfig(): Promise<Record<string, string>> {
       `${prefix}/agentcore/memory-id`,
       `${prefix}/auth/user-pool-id`,
       `${prefix}/auth/user-client-id`,
+      `${prefix}/registry/registry-id`,
     ],
   });
 
@@ -157,36 +164,67 @@ export async function getGatewayUrl(): Promise<string> {
   return url;
 }
 
-export async function listGatewayTools(authToken: string) {
-  const gatewayUrl = await getGatewayUrl();
+export async function listRegistryAgents() {
+  const config = await loadSSMConfig();
+  const registryId = config["registry-id"];
+  if (!registryId) throw new Error("Registry ID not configured");
 
-  const body = {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/list",
-    params: {},
-  };
+  const client = new BedrockAgentCoreControlClient({ region: AWS_REGION });
+  const res = await client.send(
+    new ListRegistryRecordsCommand({ registryId })
+  );
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (authToken) {
-    const token = authToken.replace(/^Bearer\s+/i, "");
-    headers["Authorization"] = `Bearer ${token}`;
+  const records = (res.registryRecords || []).filter(
+    (r) => r.status === "APPROVED" && r.descriptorType === "MCP"
+  );
+  return records;
+}
+
+export async function getRegistryRecord(recordId: string) {
+  const config = await loadSSMConfig();
+  const registryId = config["registry-id"];
+  if (!registryId) throw new Error("Registry ID not configured");
+
+  const client = new BedrockAgentCoreControlClient({ region: AWS_REGION });
+  const res = await client.send(
+    new GetRegistryRecordCommand({ registryId, recordId })
+  );
+  return res;
+}
+
+export async function syncRegistryRecord(recordId: string) {
+  const config = await loadSSMConfig();
+  const registryId = config["registry-id"];
+  if (!registryId) throw new Error("Registry ID not configured");
+
+  const { UpdateRegistryRecordCommand } = await import(
+    "@aws-sdk/client-bedrock-agentcore-control"
+  );
+  const client = new BedrockAgentCoreControlClient({ region: AWS_REGION });
+  const res = await client.send(
+    new UpdateRegistryRecordCommand({
+      registryId,
+      recordId,
+      triggerSynchronization: true,
+    })
+  );
+  return res;
+}
+
+export async function syncAllRegistryRecords() {
+  const agents = await listRegistryAgents();
+  const results = [];
+  for (const agent of agents) {
+    if (agent.recordId) {
+      try {
+        await syncRegistryRecord(agent.recordId);
+        results.push({ name: agent.name, status: "synced" });
+      } catch (err) {
+        results.push({ name: agent.name, status: "failed", error: (err as Error).message });
+      }
+    }
   }
-
-  const res = await fetch(gatewayUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Gateway request failed: ${res.status}`);
-  }
-
-  const data = await res.json();
-  return data.result?.tools || [];
+  return results;
 }
 
 export async function callGatewayTool(
@@ -233,36 +271,19 @@ export function getMemoryClient() {
   return new BedrockAgentCoreClient({ region: AWS_REGION });
 }
 
-export async function searchGatewayTools(authToken: string, query: string) {
-  const gatewayUrl = await getGatewayUrl();
+export async function searchRegistryAgents(query: string, maxResults: number = 5) {
+  const config = await loadSSMConfig();
+  const registryId = config["registry-id"];
+  if (!registryId) throw new Error("Registry ID not configured");
 
-  const body = {
-    jsonrpc: "2.0",
-    id: "search-tools-request",
-    method: "tools/call",
-    params: {
-      name: "x_amz_bedrock_agentcore_search",
-      arguments: { query },
-    },
-  };
+  const client = new BedrockAgentCoreClient({ region: AWS_REGION });
+  const res = await client.send(
+    new SearchRegistryRecordsCommand({
+      registryIds: [registryId],
+      searchQuery: query,
+      maxResults,
+    })
+  );
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (authToken) {
-    const token = authToken.replace(/^Bearer\s+/i, "");
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(gatewayUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Gateway search failed: ${res.status}`);
-  }
-
-  return res.json();
+  return res.registryRecords || [];
 }

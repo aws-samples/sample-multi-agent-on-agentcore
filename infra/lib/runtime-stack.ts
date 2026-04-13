@@ -34,6 +34,11 @@ export class RuntimeStack extends cdk.Stack {
     const gatewayUrl = ssm.StringParameter.valueForStringParameter(
       this, `/${projectName}/${environment}/mcp/gateway-url`)
 
+    // Read registry config from SSM (written by registry-stack)
+    const registryId = ssm.StringParameter.valueForStringParameter(
+      this, `/${projectName}/${environment}/registry/registry-id`)
+
+
     // Memory Execution Role (created locally — no cross-stack dep)
     const memoryExecutionRole = new iam.Role(this, 'MemoryExecutionRole', {
       assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
@@ -162,6 +167,22 @@ export class RuntimeStack extends cdk.Stack {
         ],
         resources: [
           `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
+        ],
+      })
+    )
+
+    // AgentCore Registry Access (search + list for agent discovery)
+    executionRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'RegistryAccess',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'bedrock-agentcore:SearchRegistryRecords',
+          'bedrock-agentcore:GetRegistryRecord',
+          'bedrock-agentcore:ListRegistryRecords',
+        ],
+        resources: [
+          `arn:aws:bedrock-agentcore:${this.region}:${this.account}:registry/*`,
         ],
       })
     )
@@ -408,6 +429,8 @@ async function sendResponse(event, status, data, reason) {
         ENVIRONMENT: environment,
         MEMORY_ID: this.memory.attrMemoryId,
         GATEWAY_URL: gatewayUrl,
+        REGISTRY_ID: registryId,
+        SEARCH_THRESHOLD: '10',
         USE_MEMORY_RETRIEVAL: 'true',
         BUILD_TIMESTAMP: new Date().toISOString(),
       },
@@ -421,6 +444,11 @@ async function sendResponse(event, status, data, reason) {
     this.runtime.node.addDependency(buildWaiter)
     this.runtime.node.addDependency(this.memory)
     this.runtimeArn = this.runtime.attrAgentRuntimeArn
+
+    // Cost allocation tags on the execution role for Bedrock cost tracking
+    cdk.Tags.of(executionRole).add('CostCenter', 'orchestrator')
+    cdk.Tags.of(executionRole).add('AgentComponent', 'orchestrator')
+    cdk.Tags.of(executionRole).add('AgentRole', 'orchestrator')
 
     // SSM Parameters
     new ssm.StringParameter(this, 'RuntimeArnParam', {

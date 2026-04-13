@@ -8,6 +8,10 @@ import { cn } from "../../lib/utils";
 interface SearchResult {
   name: string;
   description?: string;
+  recordId?: string;
+  status?: string;
+  descriptorType?: string;
+  version?: string;
 }
 
 interface ToolSearchPanelProps {
@@ -43,26 +47,7 @@ export function ToolSearchPanel({ token }: ToolSearchPanelProps) {
       }
       const data = await res.json();
       setRawResponse(data);
-
-      // Parse results from tool_result content
-      const content = data.result?.content;
-      if (Array.isArray(content)) {
-        const textItem = content.find(
-          (c: { type: string }) => c.type === "text"
-        );
-        if (textItem?.text) {
-          try {
-            const parsed = JSON.parse(textItem.text);
-            setResults(Array.isArray(parsed) ? parsed : parsed.tools || []);
-          } catch {
-            setResults([]);
-          }
-        } else {
-          setResults([]);
-        }
-      } else {
-        setResults([]);
-      }
+      setResults(data.records || []);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -76,7 +61,7 @@ export function ToolSearchPanel({ token }: ToolSearchPanelProps) {
       <div className="flex items-center gap-1.5 px-3 py-1.5">
         <Search className="w-3 h-3 text-muted-foreground" />
         <h3 className="font-display font-semibold text-[12px] text-muted-foreground uppercase tracking-wider">
-          Semantic Tool Search
+          Registry Search
         </h3>
       </div>
 
@@ -88,7 +73,7 @@ export function ToolSearchPanel({ token }: ToolSearchPanelProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            placeholder="e.g. find customer information"
+            placeholder="e.g. expense reimbursement, VPN issues"
             className="flex-1 bg-transparent text-[13px] text-foreground placeholder-muted-foreground outline-none font-body"
           />
           <button
@@ -120,32 +105,30 @@ export function ToolSearchPanel({ token }: ToolSearchPanelProps) {
 
         {results !== null && results.length === 0 && !error && (
           <p className="text-[13px] text-muted-foreground text-center py-3">
-            No matching tools found.
+            No matching agents found.
           </p>
         )}
 
         {results && results.length > 0 && (
           <>
             <p className="text-[11px] text-muted-foreground">
-              {results.length} tool{results.length > 1 ? "s" : ""} matched
+              {results.length} agent{results.length > 1 ? "s" : ""} matched
             </p>
-            {results.map((tool, i) => {
-              const agentKey = resolveAgentKey(tool.name);
+            {results.map((record, i) => {
+              const toolName = record.name.replace(/-/g, "_");
+              const agentKey = resolveAgentKey(toolName);
               const colorClass = getAgentColor(agentKey);
               const label = getAgentLabel(agentKey);
-              const shortName = tool.name.includes("___")
-                ? tool.name.split("___").pop()
-                : tool.name;
 
               return (
                 <div
-                  key={`${tool.name}-${i}`}
+                  key={record.recordId || `${record.name}-${i}`}
                   className="bg-card border border-border rounded px-2.5 py-1.5 space-y-0.5 animate-slide-up"
                 >
                   <div className="flex items-center gap-1.5">
                     <Wrench className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
                     <span className="text-[13px] font-medium text-foreground font-mono truncate">
-                      {shortName}
+                      {record.name}
                     </span>
                     <span
                       className={cn(
@@ -156,11 +139,24 @@ export function ToolSearchPanel({ token }: ToolSearchPanelProps) {
                       {label}
                     </span>
                   </div>
-                  {tool.description && (
+                  {record.description && (
                     <p className="text-[12px] text-muted-foreground leading-snug pl-4">
-                      {tool.description}
+                      {record.description}
                     </p>
                   )}
+                  <div className="flex items-center gap-2 pl-4 text-[11px] text-muted-foreground">
+                    {record.status && (
+                      <span className={cn(
+                        "px-1 py-px rounded",
+                        record.status === "APPROVED" ? "bg-green-500/10 text-green-500" : "bg-yellow-500/10 text-yellow-500"
+                      )}>
+                        {record.status}
+                      </span>
+                    )}
+                    {record.descriptorType && (
+                      <span>{record.descriptorType}</span>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -183,7 +179,7 @@ export function ToolSearchPanel({ token }: ToolSearchPanelProps) {
           <div className="flex flex-col items-center justify-center py-5 text-muted-foreground gap-1.5">
             <Search className="w-5 h-5 opacity-30" />
             <p className="text-[13px] text-center max-w-[200px]">
-              Search for tools using natural language. The gateway uses semantic search to find relevant matches.
+              Search for agents using natural language. Registry uses hybrid search (semantic + keyword) to find relevant matches.
             </p>
           </div>
         )}

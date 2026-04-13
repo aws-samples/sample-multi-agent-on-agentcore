@@ -5,10 +5,13 @@ import { RefreshCw, Wrench, Server } from "lucide-react";
 import { resolveAgentKey, getAgentLabel, getAgentColor } from "../../lib/constants";
 import { cn } from "../../lib/utils";
 
-interface GatewayTool {
+interface RegistryRecord {
   name: string;
   description?: string;
-  inputSchema?: Record<string, unknown>;
+  recordId?: string;
+  status?: string;
+  descriptorType?: string;
+  version?: string;
 }
 
 function ExpandableDescription({ text }: { text: string }) {
@@ -30,24 +33,16 @@ function ExpandableDescription({ text }: { text: string }) {
   );
 }
 
-/** Map agent key (e.g. "admin_agent") to Gateway target name (e.g. "admin-mcp-server") */
-function agentKeyToTargetName(agentKey: string): string {
-  const base = agentKey.replace(/_agent$/, "").replace(/_/g, "-");
-  return `${base}-mcp-server`;
-}
-
 interface GatewayToolsPanelProps {
   token: string;
 }
 
 export function GatewayToolsPanel({ token }: GatewayToolsPanelProps) {
-  const [tools, setTools] = useState<GatewayTool[]>([]);
+  const [records, setRecords] = useState<RegistryRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [syncingAgents, setSyncingAgents] = useState<Set<string>>(new Set());
-  const [syncingAll, setSyncingAll] = useState(false);
 
-  const fetchTools = useCallback(async () => {
+  const fetchRecords = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -59,7 +54,7 @@ export function GatewayToolsPanel({ token }: GatewayToolsPanelProps) {
         throw new Error(body.detail || `Failed: ${res.status}`);
       }
       const data = await res.json();
-      setTools(data.tools || []);
+      setRecords(data.agents || []);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -68,66 +63,8 @@ export function GatewayToolsPanel({ token }: GatewayToolsPanelProps) {
   }, [token]);
 
   useEffect(() => {
-    fetchTools();
-  }, [fetchTools]);
-
-  const handleSync = useCallback(async (agentKey: string) => {
-    const targetName = agentKeyToTargetName(agentKey);
-    setSyncingAgents((prev) => new Set(prev).add(agentKey));
-    try {
-      const res = await fetch("/api/gateway/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetName }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        console.error("Sync failed:", body);
-      }
-      // Wait for sync to complete, then refresh tool list
-      await new Promise((r) => setTimeout(r, 3000));
-      await fetchTools();
-    } catch (err) {
-      console.error("Sync error:", err);
-    } finally {
-      setSyncingAgents((prev) => {
-        const next = new Set(prev);
-        next.delete(agentKey);
-        return next;
-      });
-    }
-  }, [fetchTools]);
-
-  const handleSyncAll = useCallback(async () => {
-    setSyncingAll(true);
-    try {
-      const res = await fetch("/api/gateway/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        console.error("Sync all failed");
-      }
-      await new Promise((r) => setTimeout(r, 5000));
-      await fetchTools();
-    } catch (err) {
-      console.error("Sync all error:", err);
-    } finally {
-      setSyncingAll(false);
-    }
-  }, [fetchTools]);
-
-  // Filter out internal gateway tools and group by agent
-  const agentTools = tools.filter(
-    (t) => !t.name.toLowerCase().includes("x_amz_bedrock_agentcore")
-  );
-  const grouped = agentTools.reduce<Record<string, GatewayTool[]>>((acc, tool) => {
-    const agentKey = resolveAgentKey(tool.name);
-    if (!acc[agentKey]) acc[agentKey] = [];
-    acc[agentKey].push(tool);
-    return acc;
-  }, {});
+    fetchRecords();
+  }, [fetchRecords]);
 
   return (
     <div className="h-full flex flex-col">
@@ -139,24 +76,14 @@ export function GatewayToolsPanel({ token }: GatewayToolsPanelProps) {
             Agent Registry
           </h3>
         </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={handleSyncAll}
-            disabled={syncingAll}
-            className="text-[11px] text-muted-foreground hover:text-accent transition-colors disabled:opacity-30"
-            title="Sync all targets"
-          >
-            Sync All
-          </button>
-          <button
-            onClick={fetchTools}
-            disabled={loading}
-            className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
-            title="Refresh"
-          >
-            <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
-          </button>
-        </div>
+        <button
+          onClick={fetchRecords}
+          disabled={loading}
+          className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
+          title="Refresh"
+        >
+          <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
+        </button>
       </div>
 
       {/* Content */}
@@ -167,67 +94,73 @@ export function GatewayToolsPanel({ token }: GatewayToolsPanelProps) {
           </div>
         )}
 
-        {loading && agentTools.length === 0 && (
+        {loading && records.length === 0 && (
           <div className="flex items-center justify-center mt-6 gap-2 text-muted-foreground">
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
             <span className="text-[13px]">Loading...</span>
           </div>
         )}
 
-        {!loading && !error && agentTools.length === 0 && (
+        {!loading && !error && records.length === 0 && (
           <p className="text-[13px] text-muted-foreground text-center mt-6">
             No agents registered.
           </p>
         )}
 
-        {Object.entries(grouped).map(([agentKey, agentTools]) => {
+        {records.map((record) => {
+          const toolName = record.name.replace(/-/g, "_");
+          const agentKey = resolveAgentKey(toolName);
           const label = getAgentLabel(agentKey);
           const colorClass = getAgentColor(agentKey);
-          const isSyncing = syncingAll || syncingAgents.has(agentKey);
 
           return (
-            <div key={agentKey} className="space-y-1">
+            <div
+              key={record.recordId || record.name}
+              className="bg-card border border-border rounded px-2.5 py-1.5 space-y-0.5"
+            >
               <div className="flex items-center gap-1.5">
                 <span
                   className={cn(
-                    "w-1.5 h-1.5 rounded-full",
+                    "w-1.5 h-1.5 rounded-full shrink-0",
                     `bg-${colorClass}`
                   )}
                 />
-                <h3 className={cn("text-[13px] font-semibold font-display uppercase tracking-wider", `text-${colorClass}`)}>
-                  {label}
-                </h3>
-                <span className="text-[11px] text-muted-foreground">
-                  {agentTools.length} tool{agentTools.length > 1 ? "s" : ""}
+                <Wrench className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
+                <span className="text-[13px] font-medium text-foreground font-mono truncate">
+                  {record.name}
                 </span>
-                <button
-                  onClick={() => handleSync(agentKey)}
-                  disabled={isSyncing}
-                  className="ml-auto text-muted-foreground hover:text-accent transition-colors disabled:opacity-40"
-                  title={`Sync ${label} target`}
-                >
-                  <RefreshCw className={cn("w-2.5 h-2.5", isSyncing && "animate-spin")} />
-                </button>
-              </div>
-
-              {agentTools.map((tool) => (
-                <div
-                  key={tool.name}
-                  className="bg-card border border-border rounded px-2.5 py-1.5 space-y-0.5"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <Wrench className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
-                    <span className="text-[13px] font-medium text-foreground font-mono truncate">
-                      {tool.name.includes("___")
-                        ? tool.name.split("___").pop()
-                        : tool.name}
-                    </span>
-                  </div>
-                  {tool.description && (
-                    <ExpandableDescription text={tool.description} />
+                {record.status && (
+                  <span className={cn(
+                    "text-[10px] px-1.5 py-px rounded-full shrink-0 font-medium",
+                    record.status === "APPROVED" ? "bg-green-500/15 text-green-500" :
+                    record.status === "PENDING_APPROVAL" ? "bg-yellow-500/15 text-yellow-500" :
+                    record.status === "REJECTED" ? "bg-red-500/15 text-red-500" :
+                    record.status === "DEPRECATED" ? "bg-gray-500/15 text-gray-500" :
+                    "bg-blue-500/15 text-blue-500"
+                  )}>
+                    {record.status}
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    "text-[10px] px-1 py-px rounded-full ml-auto shrink-0",
+                    `bg-${colorClass}/15 text-${colorClass}`
                   )}
-                </div>
-              ))}
+                >
+                  {label}
+                </span>
+              </div>
+              {record.description && (
+                <ExpandableDescription text={record.description} />
+              )}
+              <div className="flex items-center gap-2 pl-4 text-[11px] text-muted-foreground">
+                {record.descriptorType && (
+                  <span>{record.descriptorType}</span>
+                )}
+                {record.version && (
+                  <span>v{record.version}</span>
+                )}
+              </div>
             </div>
           );
         })}

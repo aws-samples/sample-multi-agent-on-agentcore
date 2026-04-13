@@ -68,17 +68,17 @@ deploy_all() {
   cd "${INFRA_DIR}"
 
   # Phase 1: Auth (writes SSM params)
-  log_step "Phase 1/5: Auth (Cognito + OAuth2 credential provider)..."
+  log_step "Phase 1/6: Auth (Cognito + OAuth2 credential provider)..."
   npx cdk deploy "${PROJECT}-auth" --exclusively --require-approval never
   echo ""
 
   # Phase 1.5: Data (DynamoDB tables + RBAC scoped role)
-  log_step "Phase 1.5/5: Data (DynamoDB tables + RBAC IAM role)..."
+  log_step "Phase 1.5/6: Data (DynamoDB tables + RBAC IAM role)..."
   npx cdk deploy "${PROJECT}-data" --exclusively --require-approval never
   echo ""
 
   # Phase 2: Component Runtimes (reads auth SSM, writes runtime SSM)
-  log_step "Phase 2/5: Component Runtimes (5 sub-agents)..."
+  log_step "Phase 2/6: Component Runtimes (5 sub-agents)..."
   npx cdk deploy \
     "${PROJECT}-hr" \
     "${PROJECT}-it-support" \
@@ -88,13 +88,18 @@ deploy_all() {
     --exclusively --concurrency 5 --require-approval never
   echo ""
 
-  # Phase 3: Gateway (reads auth + runtime + data SSM)
-  log_step "Phase 3/5: Gateway..."
+  # Phase 3: Registry (reads runtime SSM, registers agents in catalog)
+  log_step "Phase 3/6: Registry (agent catalog + governance)..."
+  npx cdk deploy "${PROJECT}-registry" --exclusively --require-approval never
+  echo ""
+
+  # Phase 4: Gateway (reads auth + runtime + data SSM)
+  log_step "Phase 4/6: Gateway..."
   npx cdk deploy "${PROJECT}-gateway" --exclusively --require-approval never
   echo ""
 
-  # Phase 4: Orchestrator (reads gateway SSM)
-  log_step "Phase 4/5: Orchestrator Runtime..."
+  # Phase 5: Orchestrator (reads gateway + registry SSM)
+  log_step "Phase 5/6: Orchestrator Runtime..."
   npx cdk deploy "${PROJECT}-runtime" --exclusively --require-approval never \
     --outputs-file "${SCRIPT_DIR}/cdk-outputs.json"
   echo ""
@@ -153,6 +158,15 @@ deploy_sub_agents() {
   log_info "Sub-agent deployment complete!"
 }
 
+deploy_registry() {
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  Deploying Registry (Agent Catalog)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  deploy_stacks "${PROJECT}-registry"
+  log_info "Registry deployment complete!"
+}
+
 deploy_gateway() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "  Deploying Gateway Stack"
@@ -186,9 +200,10 @@ display_menu() {
   echo "  1) Auth               (Cognito, OAuth2 credential provider)"
   echo "  2) Data               (DynamoDB tables + RBAC IAM role)"
   echo "  3) Sub-Agents         (5 domain agents)"
-  echo "  4) Gateway            (MCP Gateway with 5 MCP targets)"
-  echo "  5) Orchestrator       (Concierge agent runtime with Memory)"
-  echo "  6) Full Stack         (All components — phased deployment)"
+  echo "  4) Registry           (Agent catalog + governance)"
+  echo "  5) Gateway            (MCP Gateway with 5 MCP targets)"
+  echo "  6) Orchestrator       (Concierge agent runtime with Memory)"
+  echo "  7) Full Stack         (All components — phased deployment)"
   echo ""
   echo "  0) Exit"
   echo ""
@@ -209,18 +224,19 @@ main() {
   ensure_infra
   display_menu
 
-  read -p "Select option (0-6): " OPTION
+  read -p "Select option (0-7): " OPTION
   echo ""
 
   case $OPTION in
     1) deploy_infra ;;
     2) deploy_data ;;
     3) deploy_sub_agents ;;
-    4) deploy_gateway ;;
-    5) deploy_orchestrator ;;
-    6) deploy_full_stack ;;
+    4) deploy_registry ;;
+    5) deploy_gateway ;;
+    6) deploy_orchestrator ;;
+    7) deploy_full_stack ;;
     0) log_info "Exiting..."; exit 0 ;;
-    *) log_error "Invalid option. Please select 0-6."; exit 1 ;;
+    *) log_error "Invalid option. Please select 0-7."; exit 1 ;;
   esac
 
   echo ""

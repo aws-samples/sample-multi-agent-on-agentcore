@@ -48,6 +48,36 @@ export class AuthStack extends cdk.Stack {
       // TODO: For production, consider increasing minLength or enabling advanced password options.
     })
 
+    // Pre Token Generation trigger — injects agentcore/invoke scope into
+    // access tokens issued via USER_PASSWORD_AUTH.  Without this, only OAuth
+    // flows (authorization_code, client_credentials) include custom scopes.
+    const preTokenFn = new lambda_.Function(this, 'PreTokenGenerationFn', {
+      functionName: `${projectName}-pre-token-generation`,
+      runtime: lambda_.Runtime.NODEJS_22_X,
+      handler: 'index.handler',
+      code: lambda_.Code.fromInline(`
+exports.handler = async (event) => {
+  // V2 trigger: add agentcore/invoke scope to access token
+  event.response = {
+    claimsAndScopeOverrideDetails: {
+      accessTokenGeneration: {
+        scopesToAdd: ['agentcore/invoke'],
+      },
+    },
+  };
+  return event;
+};
+      `),
+      timeout: cdk.Duration.seconds(5),
+      memorySize: 128,
+    })
+
+    this.userPool.addTrigger(
+      cognito.UserPoolOperation.PRE_TOKEN_GENERATION_CONFIG,
+      preTokenFn,
+      cognito.LambdaVersion.V2_0,
+    )
+
     // Domain for OAuth2 token endpoint
     this.userPoolDomain = this.userPool.addDomain('Domain', {
       cognitoDomain: {
@@ -90,8 +120,7 @@ export class AuthStack extends cdk.Stack {
       oAuth: {
         flows: { implicitCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.PROFILE, cognito.OAuthScope.custom(this.scope)],
-        // TODO: Update callback URL for non-local deployments
-      callbackUrls: ['http://localhost:8501'],
+        callbackUrls: ['http://localhost:3000'],
       },
     })
     this.userClient.node.addDependency(this.resourceServer)

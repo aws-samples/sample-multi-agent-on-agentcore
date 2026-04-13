@@ -21,5 +21,22 @@ frontend/.env.local
 *.log
 .toolcalls-log.json
 
+# Lambda bundled dependencies
+infra/lambda/**/boto3/
+infra/lambda/**/boto3-*.dist-info/
+infra/lambda/**/botocore/
+infra/lambda/**/botocore-*.dist-info/
+infra/lambda/**/s3transfer/
+infra/lambda/**/s3transfer-*.dist-info/
+infra/lambda/**/urllib3/
+infra/lambda/**/urllib3-*.dist-info/
+infra/lambda/**/dateutil/
+infra/lambda/**/python_dateutil-*.dist-info/
+infra/lambda/**/jmespath/
+infra/lambda/**/jmespath-*.dist-info/
+infra/lambda/**/six.py
+infra/lambda/**/six-*.dist-info/
+infra/lambda/**/bin/
+
 # Build
 /build

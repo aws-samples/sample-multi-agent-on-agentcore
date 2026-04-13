@@ -126,7 +126,7 @@ def lambda_handler(event, context):
     headers = gateway_request.get("headers", {})
     body = gateway_request.get("body", {})
 
-    # Read JWT from Authorization header
+    # Read JWT from Authorization header (user's access token with agentcore/invoke scope)
     auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
 
     # Step 1: Exchange user JWT via AgentCore Identity (provider-agnostic)

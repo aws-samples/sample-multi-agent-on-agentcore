@@ -7,14 +7,16 @@
  *   1. Auth Stack (Cognito + OAuth2CredentialProvider → writes SSM)
  *   1.5 Data Stack (DynamoDB tables + scoped IAM role for RBAC → writes SSM)
  *   2. Component Runtime Stacks (5 sub-agents, reads auth SSM → writes runtime SSM)
- *   3. Gateway Stack (reads auth + runtime + data SSM, creates own IAM role)
- *   4. Runtime Stack (orchestrator, reads gateway SSM, creates own memory role)
+ *   3. Registry Stack (reads runtime SSM → registers agents in catalog → writes SSM)
+ *   4. Gateway Stack (reads auth + runtime + data SSM, creates own IAM role)
+ *   5. Runtime Stack (orchestrator, reads gateway + registry SSM, creates own memory role)
  */
 import 'source-map-support/register'
 import * as cdk from 'aws-cdk-lib'
 import { AuthStack } from '../lib/auth-stack'
 import { DataStack } from '../lib/data-stack'
 import { ComponentRuntimeStack } from '../lib/component-runtime-stack'
+import { RegistryStack } from '../lib/registry-stack'
 import { GatewayStack } from '../lib/gateway-stack'
 import { RuntimeStack } from '../lib/runtime-stack'
 
@@ -87,14 +89,21 @@ new ComponentRuntimeStack(app, `${projectName}-knowledge`, {
   env,
 })
 
-// 3. Gateway (reads auth + runtime SSM, creates own role)
+// 3. Registry (reads runtime SSM, registers agents in catalog)
+new RegistryStack(app, `${projectName}-registry`, {
+  projectName,
+  environment,
+  env,
+})
+
+// 4. Gateway (reads auth + runtime SSM, creates own role)
 new GatewayStack(app, `${projectName}-gateway`, {
   projectName,
   environment,
   env,
 })
 
-// 4. Orchestrator Runtime (reads gateway SSM, creates own memory role)
+// 5. Orchestrator Runtime (reads gateway + registry SSM, creates own memory role)
 new RuntimeStack(app, `${projectName}-runtime`, {
   projectName,
   environment,
